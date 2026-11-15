@@ -47,12 +47,32 @@ dialog::backdrop{background:#0009}
 #existing-results{display:grid;gap:4px;max-height:220px;overflow:auto}
 #existing-results button{text-align:left}
 @media(max-width:800px){.workspace{grid-template-columns:1fr}.workspace aside{grid-row:1}}
+
+#translate,.activity{padding:22px;gap:16px;border-radius:22px;background:linear-gradient(155deg,#211c17,#191511);box-shadow:0 12px 28px #08060435}
+#translate h2{margin-bottom:6px}
+.sparkle{color:var(--amber);margin-right:4px}
+#translate label{color:var(--muted);font-weight:500}
+#translate select{border-radius:20px;padding:11px 14px;color:var(--text);font-weight:400}
+#translate button{width:100%;border-radius:13px}
+#translate #submit{padding:13px;background:#ffa52b}
+#translate #open-regenerate{background:#211b16;font-weight:500}
+#open-regenerate::before{content:"↻";margin-right:8px}
+#submit::before{content:"✧";margin-right:8px}
+.activity-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.activity-heading h2{font-size:16px;font-weight:600}
+.activity-heading.is-active h2::before{content:"";display:inline-block;background:var(--amber);border-radius:50%;width:8px;height:8px;margin-right:8px}
+#activity-count,#status{color:var(--muted)}
+#activity-count{font:13px ui-monospace,monospace;white-space:nowrap}
+#activity-video{margin:0;color:var(--text);overflow-wrap:anywhere}
+#progress{order:0;height:8px;appearance:none;border:0;border-radius:8px;overflow:hidden;background:#272019}
+#progress::-webkit-progress-bar{background:#272019}
+#progress::-webkit-progress-value{background:repeating-linear-gradient(45deg,#ffa52b 0 7px,#ffc16a 7px 14px);border-radius:8px}
+#progress::-moz-progress-bar{background:repeating-linear-gradient(45deg,#ffa52b 0 7px,#ffc16a 7px 14px);border-radius:8px}
 </style>
 <main>
 <header style="display:flex;align-items:center;justify-content:space-between"><strong class="brand"><span aria-hidden="true">文</span>Translerr</strong><nav><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
 <h1>Library</h1>
 <p>Translate English subtitles for movies and TV episodes.</p>
-<form id="translate">
 <div class="workspace">
 <section class="panel library-panel" aria-label="Missing subtitles">
 <div class="toolbar">
@@ -79,16 +99,17 @@ dialog::backdrop{background:#0009}
 </section>
 <aside>
 <form id="translate" class="panel">
-<h2>Translate</h2>
+<h2><span class="sparkle" aria-hidden="true">✧</span> Translate</h2>
 <label>AI provider<select id="provider" required></select></label>
 <label>Target language<select id="code" required></select></label>
 <button id="submit" disabled>Translate selected</button>
 <button id="open-regenerate" type="button" disabled>Regenerate subtitle</button>
 </form>
 <section class="panel activity" aria-label="Translation activity">
-<h2>Activity</h2>
-<p id="status" role="status">Loading episodes…</p>
+<div class="activity-heading"><h2 id="activity-title">Activity</h2><span id="activity-count"></span></div>
+<p id="activity-video" hidden></p>
 <progress id="progress" aria-label="Subtitle translation progress" max="100" hidden></progress>
+<p id="status" role="status">Loading episodes…</p>
 <div id="queue-actions" hidden>
 <button type="button" id="resume">Resume queue</button>
 <button type="button" id="discard">Discard remaining items</button>
@@ -210,10 +231,21 @@ async function poll() {
       refreshed = revision;
       await reload();
     }
-    if (job.run) el('status').textContent = job.message;
-    const cues = job.active && job.message.match(/cues (\d+)–\d+ of (\d+)/i);
+    const current = job.active && job.message.match(/^(\d+)\/(\d+) · (.+) · (.+)$/);
+    const cues = current && current[4].match(/cues (\d+)–(\d+) of (\d+)/i);
+    el('activity-title').textContent = job.active ? 'Translating' : job.paused ? 'Paused' : 'Activity';
+    el('activity-title').parentElement.classList.toggle('is-active', job.active);
+    el('activity-count').textContent = current ? current[1] + ' / ' + current[2] : '';
+    el('activity-video').hidden = !current;
+    el('activity-video').textContent = current ? current[3] : '';
     el('progress').hidden = !cues;
-    if (cues) el('progress').value = 100 * (Number(cues[1]) - 1) / Number(cues[2]);
+    if (cues) {
+      const percent = Math.floor(100 * (Number(cues[1]) - 1) / Number(cues[3]));
+      el('progress').value = percent;
+      el('status').textContent = 'Cues ' + cues[1] + '–' + cues[2] + ' of ' + cues[3] + ' · ' + percent + '%';
+    } else if (job.run) {
+      el('status').textContent = current ? current[4] : job.message;
+    }
     el('issues').replaceChildren(...(job.issues || []).map(message => {
       const item = document.createElement('li');
       item.textContent = message;
