@@ -17,6 +17,9 @@ header nav{display:flex;flex-wrap:wrap;gap:8px}
 dialog{width:min(680px,calc(100% - 32px));background:#1a2821;color:inherit;border:1px solid #597263;border-radius:12px;padding:20px}
 dialog::backdrop{background:#0009}dialog form{margin:0;padding:0;border:0}dialog h2{margin:0}
 .translation-actions{display:flex;flex-wrap:wrap;gap:8px}.translation-actions button{width:auto}
+#existing-results{display:grid;gap:4px;max-height:220px;overflow:auto}
+#existing-results button{text-align:left;background:#111d17;color:inherit;font-weight:500}
+#existing-results button[aria-pressed="true"]{background:#c8f487;color:#142011}
 </style>
 <main>
 <header style="display:flex;align-items:center;justify-content:space-between"><h1>Translerr</h1><nav><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
@@ -57,7 +60,7 @@ dialog::backdrop{background:#0009}dialog form{margin:0;padding:0;border:0}dialog
 <form id="regenerate">
 <h2>Regenerate subtitle</h2>
 <label>Search videos with subtitles<input id="existing-filter" type="search"></label>
-<label>Video<select id="existing-video" required></select></label>
+<div id="existing-results" role="group" aria-label="Matching videos"></div>
 <label>English source<select id="english-source" required></select></label>
 <p>The current subtitle is backed up when the replacement is ready.</p>
 <button id="regenerate-submit" disabled>Regenerate</button>
@@ -190,20 +193,44 @@ el('provider').onchange = controls;
 const dialog = el('regenerate-dialog');
 let sourceRequest = 0;
 let existingVideos = [];
+let selectedVideo = '';
+function videoLabel(path) {
+  const [library, folder, ...rest] = path.split('/');
+  const filename = rest.at(-1) || folder;
+  const stem = filename.replace(/\.[^.]+$/, '');
+  if (library === 'Movies') return rest.length ? folder : stem;
+  const episode = stem.match(/S\d{1,3}E\d{1,4}(?:E\d{1,4})*/i);
+  return rest.length && episode ? folder + ' · ' + episode[0].toUpperCase() : stem;
+}
 function renderExistingVideos() {
-  const select = el('existing-video');
-  const previous = select.value;
   const query = el('existing-filter').value.trim().toLowerCase();
-  const matches = existingVideos.filter(name => name.toLowerCase().includes(query));
-  select.replaceChildren(new Option('Choose a video', ''), ...matches.map(name => new Option(name, name)));
-  if (matches.includes(previous)) select.value = previous;
-  showSources();
-  if (!select.value) el('regenerate-status').textContent = matches.length ? '' : 'No videos match this search.';
+  const matches = existingVideos.filter(path =>
+    videoLabel(path).toLowerCase().includes(query) || path.toLowerCase().includes(query));
+  if (selectedVideo && !matches.includes(selectedVideo)) {
+    selectedVideo = '';
+    showSources();
+  }
+  el('existing-results').replaceChildren(...matches.map(path => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = videoLabel(path);
+    button.title = path.split('/').at(-1);
+    button.setAttribute('aria-pressed', String(path === selectedVideo));
+    button.onclick = () => {
+      selectedVideo = path;
+      for (const row of el('existing-results').children) {
+        row.setAttribute('aria-pressed', String(row === button));
+      }
+      showSources();
+    };
+    return button;
+  }));
+  if (!selectedVideo) el('regenerate-status').textContent = matches.length ? '' : 'No videos match this search.';
 }
 el('existing-filter').oninput = renderExistingVideos;
 async function showSources() {
   const request = ++sourceRequest;
-  const video = el('existing-video').value;
+  const video = selectedVideo;
   el('english-source').replaceChildren();
   el('regenerate-submit').disabled = true;
   if (!video) return;
@@ -224,7 +251,9 @@ async function showSources() {
 el('open-regenerate').onclick = async () => {
   existingVideos = [];
   el('existing-filter').value = el('filter').value;
-  el('existing-video').replaceChildren();
+  selectedVideo = '';
+  ++sourceRequest;
+  el('existing-results').replaceChildren();
   el('english-source').replaceChildren();
   el('regenerate-submit').disabled = true;
   el('regenerate-status').textContent = 'Finding existing subtitles…';
@@ -237,7 +266,6 @@ el('open-regenerate').onclick = async () => {
     renderExistingVideos();
   } catch (error) { el('regenerate-status').textContent = error.message; }
 };
-el('existing-video').onchange = showSources;
 el('close-regenerate').onclick = () => dialog.close();
 el('regenerate').onsubmit = async event => {
   event.preventDefault();
@@ -247,7 +275,7 @@ el('regenerate').onsubmit = async event => {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-Translaterr-Token': '__TOKEN__'},
       body: JSON.stringify({
-        video: el('existing-video').value, source: el('english-source').value,
+        video: selectedVideo, source: el('english-source').value,
         provider: el('provider').value, code: el('code').value
       })
     });
