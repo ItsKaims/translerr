@@ -63,6 +63,11 @@ the queue. Correct the provider settings or quota, then choose **Resume queue**.
 **Discard remaining items** clears the pending work and keeps saved subtitles.
 If your media paths change, the queue may no longer find the original titles.
 
+To update an existing target-language SRT, choose the target language and
+provider, then click **Regenerate subtitle**. Select the video and an English
+source. The existing subtitle stays available until translation succeeds, then
+Translerr keeps it as a hidden `.bak` file next to the replacement.
+
 ## Privacy and storage
 
 Translerr reads subtitle tracks and performs PGS OCR locally. It sends the

@@ -14,6 +14,8 @@ input[type=checkbox]{width:auto;flex:none;accent-color:#c8f487}
 #issues{margin:0;overflow-wrap:anywhere}
 .nav-button{display:inline-block;width:auto;padding:12px;border:1px solid #597263;border-radius:8px;background:#c8f487;color:#142011;font:inherit;font-weight:700;text-decoration:none;cursor:pointer}
 header nav{display:flex;flex-wrap:wrap;gap:8px}
+dialog{width:min(680px,calc(100% - 32px));background:#1a2821;color:inherit;border:1px solid #597263;border-radius:12px;padding:20px}
+dialog::backdrop{background:#0009}dialog form{margin:0;padding:0;border:0}dialog h2{margin:0}
 </style>
 <main>
 <header style="display:flex;align-items:center;justify-content:space-between"><h1>Translerr</h1><nav><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
@@ -32,6 +34,7 @@ header nav{display:flex;flex-wrap:wrap;gap:8px}
 <label>Target language<select id="code" required></select></label>
 </div>
 <button id="submit" disabled>Translate selected</button>
+<button id="open-regenerate" type="button" disabled>Regenerate subtitle</button>
 <p id="status" role="status">Loading episodes…</p>
 <div id="queue-actions" hidden>
 <button type="button" id="resume">Resume queue</button>
@@ -47,6 +50,17 @@ header nav{display:flex;flex-wrap:wrap;gap:8px}
 </table>
 </div>
 </main>
+<dialog id="regenerate-dialog">
+<form id="regenerate">
+<h2>Regenerate subtitle</h2>
+<label>Video<select id="existing-video" required></select></label>
+<label>English source<select id="english-source" required></select></label>
+<p>The current subtitle is backed up when the replacement is ready.</p>
+<button id="regenerate-submit" disabled>Regenerate</button>
+<button type="button" id="close-regenerate">Cancel</button>
+<p id="regenerate-status" role="status"></p>
+</form>
+</dialog>
 <script>
 const el = id => document.getElementById(id);
 el('logout').onclick = async () => {
@@ -70,6 +84,7 @@ function visible() {
 function controls() {
   el('submit').disabled = loading || active || paused || sending || !selected.size || !el('provider').value;
   el('refresh-library').disabled = loading || !el('code').value;
+  el('open-regenerate').disabled = active || paused || sending || loading || !el('provider').value;
   el('count').textContent = selected.size + ' selected';
 }
 function render() {
@@ -168,6 +183,68 @@ el('all').onclick = () => { for (const name of visible()) selected.add(name); re
 el('clear').onclick = () => { selected.clear(); render(); };
 el('code').onchange = () => { selected.clear(); reload(); };
 el('provider').onchange = controls;
+const dialog = el('regenerate-dialog');
+let sourceRequest = 0;
+async function showSources() {
+  const request = ++sourceRequest;
+  const video = el('existing-video').value;
+  el('english-source').replaceChildren();
+  el('regenerate-submit').disabled = true;
+  if (!video) return;
+  el('regenerate-status').textContent = 'Checking English tracks…';
+  try {
+    const params = new URLSearchParams({video, code: el('code').value});
+    const response = await fetch('/english-sources?' + params);
+    const data = await response.json();
+    if (request !== sourceRequest) return;
+    if (!response.ok) throw Error(data.message);
+    el('english-source').replaceChildren(...data.sources.map(([id, label]) => new Option(label, id)));
+    el('regenerate-submit').disabled = !data.sources.length;
+    el('regenerate-status').textContent = data.sources.length ? '' : 'No supported English sources found.';
+  } catch (error) {
+    if (request === sourceRequest) el('regenerate-status').textContent = error.message;
+  }
+}
+el('open-regenerate').onclick = async () => {
+  el('existing-video').replaceChildren();
+  el('english-source').replaceChildren();
+  el('regenerate-submit').disabled = true;
+  el('regenerate-status').textContent = 'Finding existing subtitles…';
+  dialog.showModal();
+  try {
+    const response = await fetch('/existing-subtitles?code=' + encodeURIComponent(el('code').value));
+    const data = await response.json();
+    if (!response.ok) throw Error(data.message);
+    el('existing-video').replaceChildren(new Option('Choose a video', ''),
+      ...data.videos.map(name => new Option(name, name)));
+    el('regenerate-status').textContent = data.videos.length ? '' : 'No existing SRT files for this language.';
+  } catch (error) { el('regenerate-status').textContent = error.message; }
+};
+el('existing-video').onchange = showSources;
+el('close-regenerate').onclick = () => dialog.close();
+el('regenerate').onsubmit = async event => {
+  event.preventDefault();
+  el('regenerate-submit').disabled = true;
+  try {
+    const response = await fetch('/regenerate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Translaterr-Token': '__TOKEN__'},
+      body: JSON.stringify({
+        video: el('existing-video').value, source: el('english-source').value,
+        provider: el('provider').value, code: el('code').value
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw Error(data.message);
+    active = true;
+    controls();
+    dialog.close();
+    el('status').textContent = data.message;
+  } catch (error) {
+    el('regenerate-status').textContent = error.message;
+    el('regenerate-submit').disabled = false;
+  }
+};
 el('translate').onsubmit = async event => {
   event.preventDefault();
   sending = true;

@@ -115,30 +115,40 @@ def ffmpeg(args, timeout=120):
         raise ValueError("Could not read the episode’s subtitle tracks with FFmpeg.") from exc
 
 
-def english_source(video, streams):
+def english_sources(video, streams):
+    sources = []
     for suffix in (".en.srt", ".eng.srt", ".en.default.srt"):
         sidecar = video.with_suffix(suffix)
         if sidecar.is_file() and sidecar.resolve().is_relative_to(ROOT):
-            return sidecar.read_text(encoding="utf-8-sig")
-    english = [
-        stream for stream in streams
-        if stream.get("tags", {}).get("language", "").lower() in {"en", "eng"}
-        and stream.get("codec_name") in TEXT
-        and not stream.get("disposition", {}).get("forced")
-    ]
-    if english:
-        return ffmpeg(["ffmpeg", "-nostdin", "-v", "error", "-i", str(video),
-                       "-map", f"0:{english[0]['index']}", "-f", "srt", "pipe:1"], timeout=900)
-    bitmap = [
-        stream for stream in streams
-        if stream_language(stream) in {"en", "eng"}
-        and stream.get("codec_name") == "hdmv_pgs_subtitle"
-        and not stream.get("disposition", {}).get("forced")
-        and "commentary" not in stream.get("tags", {}).get("title", "").lower()
-    ]
-    if bitmap:
-        return ocr_pgs(video, bitmap[0]["index"])
-    raise ValueError("No English text or PGS track found. Add a matching .en.srt beside the video.")
+            sources.append((suffix, sidecar.name))
+    for codec_group in (TEXT, {"hdmv_pgs_subtitle"}):
+        for stream in streams:
+            if (stream_language(stream) not in {"en", "eng"}
+                    or stream.get("codec_name") not in codec_group
+                    or stream.get("disposition", {}).get("forced")):
+                continue
+            title = stream.get("tags", {}).get("title", "")
+            if "commentary" in title.lower() and codec_group != TEXT:
+                continue
+            index = str(stream["index"])
+            label = f"Track {index} · {title or 'English'} · {stream['codec_name']}"
+            sources.append((index, label))
+    return sources
+
+
+def english_source(video, streams, selected=None):
+    sources = dict(english_sources(video, streams))
+    if selected is None:
+        selected = next(iter(sources), None)
+    if selected not in sources:
+        raise ValueError("No matching English source track. Choose another track or add an English SRT.")
+    if selected.startswith("."):
+        return video.with_suffix(selected).read_text(encoding="utf-8-sig")
+    stream = next(stream for stream in streams if str(stream["index"]) == selected)
+    if stream["codec_name"] == "hdmv_pgs_subtitle":
+        return ocr_pgs(video, stream["index"])
+    return ffmpeg(["ffmpeg", "-nostdin", "-v", "error", "-i", str(video),
+                   "-map", f"0:{selected}", "-f", "srt", "pipe:1"], timeout=900)
 
 
 def ocr_pgs(video, index):
@@ -336,17 +346,52 @@ def pending_episodes(code):
     return episodes, results.count(None)
 
 
-def run_job(video, provider, language, code, position):
+def regenerable_episodes(code):
+    entries = []
+    for directory, _, files in os.walk(ROOT):
+        names = set(files)
+        for name in files:
+            video = Path(directory) / name
+            if (video.suffix.lower() in VIDEO and video.is_file()
+                    and video.resolve().is_relative_to(ROOT)
+                    and video.with_suffix(f".{code}.srt").name in names):
+                entries.append(str(video.relative_to(ROOT)))
+    return sorted(entries)
+
+
+def replacement_backup(output, run):
+    return output.with_name(f".{output.name}.{run}.bak")
+
+
+def replace_subtitle(temporary, output, backup, original):
+    if output.is_symlink() or file_identity(output) != original:
+        raise ValueError("The existing subtitle changed. Start a new regeneration.")
+    try:
+        os.link(output, backup)
+    except FileExistsError:
+        if not os.path.samefile(output, backup):
+            raise ValueError("The subtitle backup conflicts with the current file.")
+    os.replace(temporary, output)
+
+
+def file_identity(path):
+    info = path.stat()
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+
+
+def run_job(video, provider, language, code, position, replacement=None):
     message = "Translation failed. See the container logs."
     try:
         output = video.with_suffix(f".{code}.srt")
-        if has_sidecar(video, code, {child.name for child in video.parent.iterdir()}):
+        if not replacement and has_sidecar(video, code, {child.name for child in video.parent.iterdir()}):
             raise ValueError("A subtitle already exists for this language.")
         aliases = language_aliases(code)
         streams = subtitle_streams(video)
-        if any(stream_language(stream) in aliases for stream in streams):
+        if not replacement and any(stream_language(stream) in aliases for stream in streams):
             raise ValueError("The episode already has an embedded subtitle in this language.")
-        cues = cues_from_srt(english_source(video, streams))
+        if replacement and (output.is_symlink() or file_identity(output) != replacement["original"]):
+            raise ValueError("The existing subtitle changed. Start a new regeneration.")
+        cues = cues_from_srt(english_source(video, streams, replacement["source"] if replacement else None))
         key, model = provider_settings(provider)
         results = []
         for start in range(0, len(cues), 24):
@@ -364,9 +409,13 @@ def run_job(video, provider, language, code, position):
                     handle.write(f"{number}\n{timing}\n{translated}\n\n")
                 handle.flush()
                 os.fchmod(handle.fileno(), 0o644)
-                os.link(temporary, output)
+                if replacement:
+                    replace_subtitle(temporary, output, replacement_backup(output, replacement["run"]),
+                                     replacement["original"])
+                else:
+                    os.link(temporary, output)
             finally:
-                temporary.unlink()
+                temporary.unlink(missing_ok=True)
         message = f"Saved {output.name}"
     except (ValueError, OSError) as exc:
         message = str(exc)
@@ -395,6 +444,18 @@ def show_queue(queue):
     )
 
 
+def subtitle_saved(video, queue):
+    output = video.with_suffix(f".{queue['code']}.srt")
+    if not output.is_file():
+        return False
+    replacement = queue.get("replacement")
+    if not replacement:
+        return True
+    backup = replacement_backup(output, replacement["run"])
+    return (backup.is_file() and file_identity(backup) == replacement["original"]
+            and not os.path.samefile(output, backup))
+
+
 def run_queue(queue):
     total = len(queue["videos"])
     try:
@@ -408,7 +469,7 @@ def run_queue(queue):
                 JOB["message"] = f"{position} · Reading English subtitles…"
             if not video.is_relative_to(ROOT) or not video.is_file() or video.suffix.lower() not in VIDEO:
                 result = "Video is no longer available in the mounted library."
-            elif queue.get("in_progress") and video.with_suffix(f".{code}.srt").is_file():
+            elif queue.get("in_progress") and subtitle_saved(video, queue):
                 result = "Saved before restart."
             elif not all(provider_settings(queue["provider"])):
                 result = "Provider API key or model is missing. Update Admin settings and resume."
@@ -417,7 +478,7 @@ def run_queue(queue):
             else:
                 queue["in_progress"] = True
                 checkpoint(queue)
-                result = run_job(video, queue["provider"], LANGUAGES[code][0], code, position)
+                result = run_job(video, queue["provider"], LANGUAGES[code][0], code, position, queue.get("replacement"))
             if re.match(r"(openai|anthropic) returned HTTP|Could not reach (openai|anthropic)", result):
                 queue.update(status="paused", message=f"{position} · {result} Resume after resolving it.")
                 break
@@ -518,6 +579,22 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/status":
             with LOCK:
                 self.reply(200, json.dumps(JOB))
+        elif urlsplit(self.path).path in {"/existing-subtitles", "/english-sources"}:
+            params = parse_qs(urlsplit(self.path).query)
+            code = params.get("code", ["et"])[0]
+            if code not in LANGUAGES:
+                return self.reply(400, json.dumps({"message": "Choose a supported language."}))
+            if urlsplit(self.path).path == "/existing-subtitles":
+                return self.reply(200, json.dumps({"videos": regenerable_episodes(code)}))
+            video = (ROOT / params.get("video", [""])[0]).resolve()
+            if (not video.is_relative_to(ROOT) or not video.is_file()
+                    or video.suffix.lower() not in VIDEO):
+                return self.reply(400, json.dumps({"message": "Choose a video in your library."}))
+            try:
+                sources = english_sources(video, subtitle_streams(video))
+            except ValueError as exc:
+                return self.reply(400, json.dumps({"message": str(exc)}))
+            self.reply(200, json.dumps({"sources": sources}))
         elif urlsplit(self.path).path == "/episodes":
             code = parse_qs(urlsplit(self.path).query).get("code", ["et"])[0].lower()
             if code not in LANGUAGES:
@@ -589,7 +666,7 @@ class Handler(BaseHTTPRequestHandler):
                     checkpoint(queue)
                     show_queue(queue)
             return self.reply(200, "{}")
-        if self.path not in {"/translate", "/settings", "/models"}:
+        if self.path not in {"/translate", "/settings", "/models", "/regenerate"}:
             return self.reply(404, "{}")
         try:
             size = int(self.headers.get("Content-Length", 0))
@@ -606,7 +683,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/settings":
                 save_provider(data)
                 return self.reply(200, json.dumps({"message": "Settings saved."}))
-            episodes = data["episodes"]
+            episodes = [data["video"]] if self.path == "/regenerate" else data["episodes"]
             if not isinstance(episodes, list) or not episodes:
                 raise ValueError("Select at least one movie or episode.")
             videos = list(dict.fromkeys((ROOT / name).resolve() for name in episodes))
@@ -619,17 +696,27 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Configure a provider API key and model in Compose.")
             if code not in LANGUAGES:
                 raise ValueError("Choose a supported target language.")
+            replacement = None
+            run = secrets.token_hex(8)
+            if self.path == "/regenerate":
+                output = videos[0].with_suffix(f".{code}.srt")
+                if output.is_symlink() or not output.is_file():
+                    raise ValueError("No replaceable subtitle file exists for this language.")
+                source = data["source"]
+                if not isinstance(source, str) or not source:
+                    raise ValueError("Select an English source track.")
+                replacement = {"source": source, "original": file_identity(output), "run": run}
         except (KeyError, TypeError, AttributeError):
             return self.reply(400, json.dumps({"message": "Invalid translation request."}))
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             return self.reply(400, json.dumps({"message": str(exc)}))
         with LOCK:
             if JOB["active"] or JOB.get("paused"):
                 return self.reply(409, json.dumps({"message": "Finish or discard the current queue first."}))
             start_queue({
-                "run": secrets.token_hex(8), "videos": [str(video.relative_to(ROOT)) for video in videos],
+                "run": run, "videos": [str(video.relative_to(ROOT)) for video in videos],
                 "provider": provider, "code": code, "next": 0, "saved": 0, "issues": [],
-                "in_progress": False,
+                "in_progress": False, "replacement": replacement,
             })
         self.reply(202, json.dumps({"message": "Translation started."}))
 
