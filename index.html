@@ -4,56 +4,98 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Translerr</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#101915;color:#f2f4e9;font:16px system-ui}main{width:100%;margin:0;padding:24px}h1{font-size:36px;letter-spacing:-.04em;margin:0}p{color:#b6c6b8}form{margin-top:30px;background:#1a2821;border:1px solid #375044;border-radius:18px;padding:24px;display:grid;gap:18px}label{display:grid;gap:8px;font-weight:600}select,input,button{width:100%;min-width:0;padding:12px;border:1px solid #597263;border-radius:8px;background:#111d17;color:inherit;font:inherit}button{background:#c8f487;color:#142011;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:default}.row{display:grid;grid-template-columns:2fr 1fr;gap:12px}#status{min-height:1.5em;overflow-wrap:anywhere;margin:0;color:#d6e5d8}
-
-#items{margin-top:18px;overflow:auto;border:1px solid #375044;border-radius:8px}
-table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:12px;border-bottom:1px solid #375044}th{background:#26382e}td:last-child{overflow-wrap:anywhere}tbody tr:hover{background:#26382e}th:first-child,td:first-child{width:52px;text-align:center}th:nth-child(2){width:110px} form{margin-top:18px} .settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px} #submit{width:auto;justify-self:start}
-input[type=checkbox]{width:auto;flex:none;accent-color:#c8f487}
-#selection{display:flex;align-items:center;gap:12px}
-#selection button{width:auto;background:#283b30;color:inherit}
-#issues{margin:0;overflow-wrap:anywhere}
-.nav-button{display:inline-block;width:auto;padding:12px;border:1px solid #597263;border-radius:8px;background:#c8f487;color:#142011;font:inherit;font-weight:700;text-decoration:none;cursor:pointer}
-header nav{display:flex;flex-wrap:wrap;gap:8px}
-dialog{width:min(680px,calc(100% - 32px));background:#1a2821;color:inherit;border:1px solid #597263;border-radius:12px;padding:20px}
-dialog::backdrop{background:#0009}dialog form{margin:0;padding:0;border:0}dialog h2{margin:0}
-.translation-actions{display:flex;flex-wrap:wrap;gap:8px}.translation-actions button{width:auto}
+:root{color-scheme:dark;--background:#15110e;--panel:#201a15;--line:#41362c;--text:#f5ede4;--muted:#bdb0a2;--amber:#ffad3d;--ink:#231405}
+*{box-sizing:border-box}
+body{margin:0;background:var(--background);color:var(--text);font:16px system-ui}
+main{max-width:1540px;margin:auto;padding:0 clamp(16px,3vw,44px) 32px}
+header{padding:16px 0;border-bottom:1px solid var(--line);gap:12px}
+header nav,.toolbar,#selection,#media-filter{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.brand{display:flex;align-items:center;gap:10px;font-size:20px}
+.brand span{display:grid;place-items:center;border-radius:50%;width:36px;height:36px;background:var(--amber);color:var(--ink)}
+h1{margin:32px 0 0;font-size:36px;letter-spacing:-.04em}
+h2{margin:0;font-size:19px}
+p,small{color:var(--muted)}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,340px);gap:20px;margin-top:24px;align-items:start}
+.panel,dialog{background:var(--panel);border:1px solid var(--line);border-radius:18px;min-width:0}
+.library-panel{overflow:hidden}
+form,.activity{display:grid;gap:14px;padding:18px}
+.activity{margin-top:16px}
+label{display:grid;gap:7px;font-weight:600}
+button,input,select,.nav-button{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#17120e;color:inherit;font:inherit}
+button,.nav-button{cursor:pointer;font-weight:650;text-decoration:none}
+button:disabled{opacity:.5;cursor:default}
+button:hover:not(:disabled),.nav-button:hover{border-color:var(--amber)}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+#submit,#regenerate-submit,#media-filter [aria-pressed="true"],#existing-results [aria-pressed="true"]{background:var(--amber);color:var(--ink)}
+.toolbar,#selection{padding:12px 14px;border-bottom:1px solid var(--line)}
+#filter{flex:1 1 170px}
+#count{margin-right:auto;color:var(--muted)}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+td{padding:11px 14px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+td:first-child{width:44px;text-align:center}
+tr:has(input:checked){background:#302316}
+td small{display:block;margin-top:3px}
+input[type=checkbox]{accent-color:var(--amber);width:17px;height:17px}
+#status,#issues{margin:0;overflow-wrap:anywhere}
+#issues:empty,#scan-note:empty{display:none}
+#scan-note,#empty{margin:12px 14px}
+#scan-note{color:#ff9470}
+progress{width:100%;accent-color:var(--amber)}
+[hidden]{display:none!important}
+dialog{color:inherit;width:min(680px,calc(100% - 32px));padding:0}
+dialog::backdrop{background:#0009}
 #existing-results{display:grid;gap:4px;max-height:220px;overflow:auto}
-#existing-results button{text-align:left;background:#111d17;color:inherit;font-weight:500}
-#existing-results button[aria-pressed="true"]{background:#c8f487;color:#142011}
+#existing-results button{text-align:left}
+@media(max-width:800px){.workspace{grid-template-columns:1fr}.workspace aside{grid-row:1}}
 </style>
 <main>
-<header style="display:flex;align-items:center;justify-content:space-between"><h1>Translerr</h1><nav><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
+<header style="display:flex;align-items:center;justify-content:space-between"><strong class="brand"><span aria-hidden="true">文</span>Translerr</strong><nav><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
+<h1>Library</h1>
 <p>Translate English subtitles for movies and TV episodes.</p>
 <form id="translate">
-<label>Filter movies and episodes<input id="filter" type="search" placeholder="Search titles"></label>
+<div class="workspace">
+<section class="panel library-panel" aria-label="Missing subtitles">
+<div class="toolbar">
+<input id="filter" type="search" placeholder="Search titles…" aria-label="Search titles">
+<div id="media-filter" role="group" aria-label="Media type">
+<button type="button" data-type="" aria-pressed="true">All</button>
+<button type="button" data-type="Movies" aria-pressed="false">Movies</button>
+<button type="button" data-type="TV" aria-pressed="false">TV</button>
+</div>
+<button id="refresh-library" type="button" disabled>Refresh</button>
+</div>
 <div id="selection">
+<span id="count" aria-live="polite">0 selected</span>
 <button id="all" type="button">Select all shown</button>
-<button id="clear" type="button">Clear</button>
-<button id="refresh-library" type="button" disabled>Refresh library</button>
-<span id="count"></span>
+<button id="clear" type="button">Unselect all</button>
 </div>
-
-<div class="settings"><label>AI provider<select id="provider" required></select></label>
-
+<div id="items">
+<table aria-label="Movies and episodes missing subtitles">
+<tbody id="library"></tbody>
+</table>
+<p id="empty" hidden>No matching titles.</p>
+</div>
+<p id="scan-note" role="status"></p>
+</section>
+<aside>
+<form id="translate" class="panel">
+<h2>Translate</h2>
+<label>AI provider<select id="provider" required></select></label>
 <label>Target language<select id="code" required></select></label>
-</div>
-<div class="translation-actions">
 <button id="submit" disabled>Translate selected</button>
 <button id="open-regenerate" type="button" disabled>Regenerate subtitle</button>
-</div>
+</form>
+<section class="panel activity" aria-label="Translation activity">
+<h2>Activity</h2>
 <p id="status" role="status">Loading episodes…</p>
+<progress id="progress" aria-label="Subtitle translation progress" max="100" hidden></progress>
 <div id="queue-actions" hidden>
 <button type="button" id="resume">Resume queue</button>
 <button type="button" id="discard">Discard remaining items</button>
 </div>
 <ul id="issues"></ul>
-</form>
-<p id="scan-note" role="status"></p>
-<div id="items">
-<table aria-label="Movies and episodes">
-<thead><tr><th scope="col">Select</th><th scope="col">Library</th><th scope="col">File</th></tr></thead>
-<tbody id="library"></tbody>
-</table>
+</section>
+</aside>
 </div>
 </main>
 <dialog id="regenerate-dialog">
@@ -78,6 +120,7 @@ el('logout').onclick = async () => {
 const selected = new Set();
 const fields = ['provider', 'code'];
 let episodes = [];
+let mediaType = "";
 let active = false;
 let paused = false;
 let sending = false;
@@ -86,12 +129,15 @@ let refreshed = '';
 let listVersion = 0;
 function visible() {
   const query = el('filter').value.trim().toLowerCase();
-  return episodes.filter(name => name.toLowerCase().includes(query));
+  return episodes.filter(name => (!mediaType || name.startsWith(mediaType + "/")) && name.toLowerCase().includes(query));
 }
 function controls() {
   el('submit').disabled = loading || active || paused || sending || !selected.size || !el('provider').value;
   el('refresh-library').disabled = loading || !el('code').value;
   el('open-regenerate').disabled = active || paused || sending || loading || !el('provider').value;
+  el('submit').textContent = selected.size ? 'Translate ' + selected.size + ' selected' : 'Translate selected';
+  el('clear').disabled = !selected.size;
+  el('all').disabled = loading || !visible().some(name => !selected.has(name));
   el('count').textContent = selected.size + ' selected';
 }
 function render() {
@@ -106,13 +152,16 @@ function render() {
       else selected.delete(name);
       controls();
     };
-    const [library, ...parts] = name.split('/');
     row.insertCell().append(checkbox);
-    row.insertCell().textContent = library === 'TV' ? 'Series' : 'Movies';
-    row.insertCell().textContent = parts.join(' / ');
+    const title = row.insertCell();
+    title.append(document.createTextNode(videoLabel(name)));
+    const filename = document.createElement('small');
+    filename.textContent = name.split('/').at(-1);
+    title.append(filename);
     return row;
   });
   el('library').replaceChildren(...rows);
+  el('empty').hidden = loading || Boolean(rows.length);
   controls();
 }
 async function reload() {
@@ -144,6 +193,7 @@ async function reload() {
   } finally {
     if (version === listVersion) {
       loading = false;
+      el('empty').hidden = Boolean(visible().length);
       controls();
     }
   }
@@ -161,6 +211,9 @@ async function poll() {
       await reload();
     }
     if (job.run) el('status').textContent = job.message;
+    const cues = job.active && job.message.match(/cues (\d+)–\d+ of (\d+)/i);
+    el('progress').hidden = !cues;
+    if (cues) el('progress').value = 100 * (Number(cues[1]) - 1) / Number(cues[2]);
     el('issues').replaceChildren(...(job.issues || []).map(message => {
       const item = document.createElement('li');
       item.textContent = message;
@@ -185,6 +238,15 @@ el('refresh-library').onclick = reload;
 window.addEventListener('focus', () => {
   if (!loading && el('code').value) reload();
 });
+for (const button of el('media-filter').querySelectorAll('button')) {
+  button.onclick = () => {
+    mediaType = button.dataset.type;
+    for (const option of el('media-filter').children) {
+      option.setAttribute('aria-pressed', String(option === button));
+    }
+    render();
+  };
+}
 el('filter').oninput = render;
 el('all').onclick = () => { for (const name of visible()) selected.add(name); render(); };
 el('clear').onclick = () => { selected.clear(); render(); };
