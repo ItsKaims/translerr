@@ -1,0 +1,53 @@
+name: Build and publish beta
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, smoke-test, and publish
+        id: publish
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_REF_NAME"
+          docker build --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$GITHUB_REF_NAME" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$image" .
+          docker run --rm --user 12345:12346 -e TRANSLERR_STATE_DIR=/tmp/state "$image" python -c \
+            'import app, subprocess; app.initialize_state(); assert app.valid_password("translerr"); assert app.Handler.setup_required(None); assert app.read_queue() is None; subprocess.run(["pgsrip", "--help"], check=True, stdout=subprocess.DEVNULL)'
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ needs.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          sed "s|@IMAGE@|$IMAGE|g" .github/release-notes.md > /tmp/translerr-notes.md
+          cp .env.example translerr.env.example
+          gh release create "$GITHUB_REF_NAME" compose.image.yaml translerr.env.example \
+            --verify-tag --prerelease --title "Translerr $GITHUB_REF_NAME beta" \
+            --notes-file /tmp/translerr-notes.md

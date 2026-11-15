@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Translerr · Admin settings</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101915;color:#f2f4e9;font:16px system-ui}
+main{max-width:680px;margin:auto;padding:32px 20px}a{color:#c8f487}
+form{display:grid;gap:18px;background:#1a2821;border:1px solid #375044;border-radius:14px;padding:24px}
+label{display:grid;gap:8px;font-weight:600}input,select,button{width:100%;padding:12px;border:1px solid #597263;border-radius:8px;background:#111d17;color:inherit;font:inherit}
+button{background:#c8f487;color:#142011;font-weight:700;cursor:pointer}
+button:disabled{opacity:.55}p,small{color:#b6c6b8}#status{margin:0;min-height:1.4em}
+.nav-button{display:inline-block;width:auto;padding:12px;border:1px solid #597263;border-radius:8px;background:#c8f487;color:#142011;font:inherit;font-weight:700;text-decoration:none;cursor:pointer}
+</style>
+<main>
+<a class="nav-button" href="/">← Library</a>
+<h1>Admin settings</h1>
+<form id="settings">
+<label>AI provider<select id="provider"><option value="openai">OpenAI</option><option value="anthropic">Anthropic Claude</option></select></label>
+<label>API key<input id="key" type="password" autocomplete="off" maxlength="4096" spellcheck="false"></label>
+<small id="key-note"></small>
+<label>Available models<select id="models" required><option value="">Choose a model</option></select></label>
+<button id="refresh-models" type="button">Reload models</button>
+<small id="model-note" role="status"></small>
+<button id="save" disabled>Save provider</button>
+<p id="status" role="status">Loading settings…</p>
+</form>
+</main>
+<script>
+const el = id => document.getElementById(id);
+let requestVersion = 0;
+let settings;
+function render() {
+  const provider = el('provider').value;
+  const current = settings[provider];
+  el('key').value = '';
+  el('key-note').textContent = current.has_key
+    ? 'A key is configured. Leave blank to keep it.' : 'Paste a key from your provider account.';
+  loadModels(current.model);
+}
+async function loadModels(selected = el('models').value) {
+  const version = ++requestVersion;
+  const provider = el('provider').value;
+  const key = el('key').value;
+  el('models').replaceChildren(new Option('Choose a model', ''));
+  if (selected) el('models').add(new Option(selected, selected, true, true));
+  if (!key && !settings[provider].has_key) {
+    el('model-note').textContent = 'Enter an API key, then click Reload models.';
+    return;
+  }
+  el('model-note').textContent = 'Loading models…';
+  try {
+    const response = await fetch('/models', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Translaterr-Token': '__TOKEN__'},
+      body: JSON.stringify({provider, key})
+    });
+    const result = await response.json();
+    if (version !== requestVersion) return;
+    if (!response.ok) throw Error(result.message);
+    const choice = el('models').value;
+    el('models').replaceChildren(new Option('Choose a model', ''));
+    for (const model of result.models) el('models').add(new Option(model, model));
+    if (choice && !result.models.includes(choice)) el('models').add(new Option(choice, choice));
+    el('models').value = choice;
+    el('model-note').textContent = result.models.length
+      ? result.models.length + ' models available to this key. Translation requires a text-capable model.'
+      : 'The provider returned no models for this key.';
+  } catch (error) {
+    if (version === requestVersion) el('model-note').textContent = error.message || 'Model list unavailable.';
+  }
+}
+el('refresh-models').onclick = () => { if (settings) loadModels(); };
+async function load() {
+  const response = await fetch('/settings');
+  if (!response.ok) throw Error();
+  settings = await response.json();
+  render();
+  el('save').disabled = false;
+}
+el('provider').onchange = () => { if (settings) render(); };
+el('settings').onsubmit = async event => {
+  event.preventDefault();
+  el('save').disabled = true;
+  try {
+    const response = await fetch('/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Translaterr-Token': '__TOKEN__'},
+      body: JSON.stringify({provider: el('provider').value, key: el('key').value, model: el('models').value})
+    });
+    const result = await response.json();
+    if (response.ok) await load();
+    el('status').textContent = result.message;
+  } catch { el('status').textContent = 'Could not save settings.'; }
+  finally { el('save').disabled = false; }
+};
+load().then(() => { el('status').textContent = ''; }).catch(() => {
+  el('status').textContent = 'Could not load settings.';
+});
+</script>

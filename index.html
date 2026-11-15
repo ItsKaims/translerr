@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Translerr</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101915;color:#f2f4e9;font:16px system-ui}main{width:100%;margin:0;padding:24px}h1{font-size:36px;letter-spacing:-.04em;margin:0}p{color:#b6c6b8}form{margin-top:30px;background:#1a2821;border:1px solid #375044;border-radius:18px;padding:24px;display:grid;gap:18px}label{display:grid;gap:8px;font-weight:600}select,input,button{width:100%;min-width:0;padding:12px;border:1px solid #597263;border-radius:8px;background:#111d17;color:inherit;font:inherit}button{background:#c8f487;color:#142011;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:default}.row{display:grid;grid-template-columns:2fr 1fr;gap:12px}#status{min-height:1.5em;overflow-wrap:anywhere;margin:0;color:#d6e5d8}
+
+#items{margin-top:18px;overflow:auto;border:1px solid #375044;border-radius:8px}
+table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:12px;border-bottom:1px solid #375044}th{background:#26382e}td:last-child{overflow-wrap:anywhere}tbody tr:hover{background:#26382e}th:first-child,td:first-child{width:52px;text-align:center}th:nth-child(2){width:110px} form{margin-top:18px} .settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px} #submit{width:auto;justify-self:start}
+input[type=checkbox]{width:auto;flex:none;accent-color:#c8f487}
+#selection{display:flex;align-items:center;gap:12px}
+#selection button{width:auto;background:#283b30;color:inherit}
+#issues{margin:0;overflow-wrap:anywhere}
+.nav-button{display:inline-block;width:auto;padding:12px;border:1px solid #597263;border-radius:8px;background:#c8f487;color:#142011;font:inherit;font-weight:700;text-decoration:none;cursor:pointer}
+header nav{display:flex;flex-wrap:wrap;gap:8px}
+</style>
+<main>
+<header style="display:flex;align-items:center;justify-content:space-between"><h1>Translerr</h1><nav><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
+<p>Translate English subtitles for movies and TV episodes.</p>
+<form id="translate">
+<label>Filter movies and episodes<input id="filter" type="search" placeholder="Search titles"></label>
+<div id="selection">
+<button id="all" type="button">Select all shown</button>
+<button id="clear" type="button">Clear</button>
+<span id="count"></span>
+</div>
+
+<div class="settings"><label>AI provider<select id="provider" required></select></label>
+
+<label>Target language<select id="code" required></select></label>
+</div>
+<button id="submit" disabled>Translate selected</button>
+<p id="status" role="status">Loading episodes…</p>
+<div id="queue-actions" hidden>
+<button type="button" id="resume">Resume queue</button>
+<button type="button" id="discard">Discard remaining items</button>
+</div>
+<ul id="issues"></ul>
+</form>
+<p id="scan-note" role="status"></p>
+<div id="items">
+<table aria-label="Movies and episodes">
+<thead><tr><th scope="col">Select</th><th scope="col">Library</th><th scope="col">File</th></tr></thead>
+<tbody id="library"></tbody>
+</table>
+</div>
+</main>
+<script>
+const el = id => document.getElementById(id);
+el('logout').onclick = async () => {
+  const response = await fetch('/logout', {method: 'POST',
+    headers: {'X-Translaterr-Token': '__TOKEN__'}, body: '{}'});
+  if (response.ok) location.assign('/login');
+};
+const selected = new Set();
+const fields = ['provider', 'code'];
+let episodes = [];
+let active = false;
+let paused = false;
+let sending = false;
+let loading = true;
+let refreshed = '';
+let listVersion = 0;
+function visible() {
+  const query = el('filter').value.trim().toLowerCase();
+  return episodes.filter(name => name.toLowerCase().includes(query));
+}
+function controls() {
+  el('submit').disabled = loading || active || paused || sending || !selected.size || !el('provider').value;
+  el('count').textContent = selected.size + ' selected';
+}
+function render() {
+  const rows = visible().map(name => {
+    const row = document.createElement('tr');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selected.has(name);
+    checkbox.setAttribute('aria-label', 'Select ' + name);
+    checkbox.onchange = () => {
+      if (checkbox.checked) selected.add(name);
+      else selected.delete(name);
+      controls();
+    };
+    const [library, ...parts] = name.split('/');
+    row.insertCell().append(checkbox);
+    row.insertCell().textContent = library === 'TV' ? 'Series' : 'Movies';
+    row.insertCell().textContent = parts.join(' / ');
+    return row;
+  });
+  el('library').replaceChildren(...rows);
+  controls();
+}
+async function reload() {
+  const version = ++listVersion;
+  loading = true;
+  controls();
+  el('scan-note').textContent = 'Checking subtitle files and embedded tracks…';
+  try {
+    const code = el('code').value.trim();
+    const data = await fetch('/episodes?code=' + encodeURIComponent(code)).then(r => r.json());
+    if (version !== listVersion) return;
+    episodes = data.episodes;
+    el('scan-note').textContent = data.unreadable
+      ? data.unreadable + ' files could not be checked and were excluded.' : '';
+    const available = new Set(episodes);
+    for (const name of selected) if (!available.has(name)) selected.delete(name);
+    const provider = el('provider');
+    const previous = provider.value;
+    provider.replaceChildren(...data.providers.map(name =>
+      new Option(name === 'openai' ? 'OpenAI' : 'Anthropic Claude', name)));
+    if (data.providers.includes(previous)) provider.value = previous;
+    el('status').textContent = !episodes.length ? 'No files missing subtitles for this language.'
+      : !provider.value ? 'Configure an API key and model in Compose.' : 'Ready';
+    loading = false;
+    render();
+  } catch {
+    if (version === listVersion) el('scan-note').textContent = 'Could not check library subtitles.';
+  }
+}
+async function poll() {
+  if (sending) return;
+  try {
+    const job = await fetch('/status').then(r => r.json());
+    active = job.active;
+    paused = Boolean(job.paused);
+    el('queue-actions').hidden = !paused;
+    const revision = job.run + ':' + job.saved;
+    if (job.run && revision !== refreshed && job.saved) {
+      refreshed = revision;
+      await reload();
+    }
+    if (job.run) el('status').textContent = job.message;
+    el('issues').replaceChildren(...(job.issues || []).map(message => {
+      const item = document.createElement('li');
+      item.textContent = message;
+      return item;
+    }));
+    controls();
+  } catch { el('status').textContent = 'Lost contact with Translerr.'; }
+}
+for (const action of ['resume', 'discard']) {
+  el(action).onclick = async () => {
+    if (action === 'discard' && !confirm('Discard the remaining queued titles?')) return;
+    try {
+      const response = await fetch('/queue/' + action, {
+        method: 'POST', headers: {'X-Translaterr-Token': '__TOKEN__'}
+      });
+      if (!response.ok) throw Error((await response.json()).message);
+      await poll();
+    } catch (error) { el('status').textContent = error.message; }
+  };
+}
+el('filter').oninput = render;
+el('all').onclick = () => { for (const name of visible()) selected.add(name); render(); };
+el('clear').onclick = () => { selected.clear(); render(); };
+el('code').onchange = () => { selected.clear(); reload(); };
+el('provider').onchange = controls;
+el('translate').onsubmit = async event => {
+  event.preventDefault();
+  sending = true;
+  controls();
+  try {
+    const response = await fetch('/translate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Translaterr-Token': '__TOKEN__'},
+      body: JSON.stringify({...Object.fromEntries(fields.map(k => [k, el(k).value])),
+        episodes: [...selected]})
+    });
+    const data = await response.json();
+    el('status').textContent = data.message;
+    if (response.ok) active = true;
+  } catch { el('status').textContent = 'Could not submit the translation.'; }
+  finally { sending = false; controls(); }
+};
+fetch('/languages').then(response => response.json()).then(languages => {
+  el('code').replaceChildren(...Object.entries(languages)
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([code, name]) => new Option(name, code)));
+  el('code').value = 'et';
+  return reload();
+}).then(poll).catch(() => {
+  el('status').textContent = 'Could not load target languages.';
+});
+setInterval(poll, 3000);
+</script>
