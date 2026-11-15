@@ -23,6 +23,7 @@ header nav{display:flex;flex-wrap:wrap;gap:8px}
 <div id="selection">
 <button id="all" type="button">Select all shown</button>
 <button id="clear" type="button">Clear</button>
+<button id="refresh-library" type="button" disabled>Refresh library</button>
 <span id="count"></span>
 </div>
 
@@ -68,6 +69,7 @@ function visible() {
 }
 function controls() {
   el('submit').disabled = loading || active || paused || sending || !selected.size || !el('provider').value;
+  el('refresh-library').disabled = loading || !el('code').value;
   el('count').textContent = selected.size + ' selected';
 }
 function render() {
@@ -98,7 +100,9 @@ async function reload() {
   el('scan-note').textContent = 'Checking subtitle files and embedded tracks…';
   try {
     const code = el('code').value.trim();
-    const data = await fetch('/episodes?code=' + encodeURIComponent(code)).then(r => r.json());
+    const response = await fetch('/episodes?code=' + encodeURIComponent(code));
+    if (!response.ok) throw Error('Library request failed');
+    const data = await response.json();
     if (version !== listVersion) return;
     episodes = data.episodes;
     el('scan-note').textContent = data.unreadable
@@ -112,10 +116,14 @@ async function reload() {
     if (data.providers.includes(previous)) provider.value = previous;
     el('status').textContent = !episodes.length ? 'No files missing subtitles for this language.'
       : !provider.value ? 'Configure an API key and model in Compose.' : 'Ready';
-    loading = false;
     render();
   } catch {
     if (version === listVersion) el('scan-note').textContent = 'Could not check library subtitles.';
+  } finally {
+    if (version === listVersion) {
+      loading = false;
+      controls();
+    }
   }
 }
 async function poll() {
@@ -151,6 +159,10 @@ for (const action of ['resume', 'discard']) {
     } catch (error) { el('status').textContent = error.message; }
   };
 }
+el('refresh-library').onclick = reload;
+window.addEventListener('focus', () => {
+  if (!loading && el('code').value) reload();
+});
 el('filter').oninput = render;
 el('all').onclick = () => { for (const name of visible()) selected.add(name); render(); };
 el('clear').onclick = () => { selected.clear(); render(); };
