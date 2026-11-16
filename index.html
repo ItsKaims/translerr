@@ -70,6 +70,9 @@ dialog::backdrop{background:#0009}
 #progress::-webkit-progress-value{background:repeating-linear-gradient(45deg,#ffa52b 0 7px,#ffc16a 7px 14px);border-radius:8px}
 #progress::-moz-progress-bar{background:repeating-linear-gradient(45deg,#ffa52b 0 7px,#ffc16a 7px 14px);border-radius:8px}
 #ignored-list{max-height:50vh;overflow:auto} .ignored-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.confirmation-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.confirm-ignore{background:var(--amber);color:var(--ink)}
+#ignore-description{margin:0}
 </style>
 <main>
 <header style="display:flex;align-items:center;justify-content:space-between"><strong class="brand"><span aria-hidden="true">文</span>Translerr</strong><nav><a class="nav-button" href="/history">History</a><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
@@ -133,6 +136,16 @@ dialog::backdrop{background:#0009}
 <button id="regenerate-submit" disabled>Regenerate</button>
 <button type="button" id="close-regenerate">Cancel</button>
 <p id="regenerate-status" role="status"></p>
+</form>
+</dialog>
+<dialog id="ignore-confirm" aria-labelledby="ignore-heading" aria-describedby="ignore-description">
+<form method="dialog">
+<h2 id="ignore-heading">Ignore selected titles?</h2>
+<p id="ignore-description">Selected movies and entire series will be hidden from the Library. You can restore them from Ignored titles.</p>
+<div class="confirmation-actions">
+<button value="cancel" autofocus>Cancel</button>
+<button value="ignore" class="confirm-ignore">Ignore selected</button>
+</div>
 </form>
 </dialog>
 <dialog id="ignored-dialog" aria-labelledby="ignored-heading">
@@ -302,8 +315,13 @@ async function updateIgnored(action, paths) {
   });
   if (!response.ok) throw Error((await response.json()).message);
 }
-el('ignore-selected').onclick = async () => {
-  if (!confirm('Ignore the selected movies and entire series?')) return;
+const ignoreConfirm = el('ignore-confirm');
+el('ignore-selected').onclick = () => {
+  ignoreConfirm.returnValue = 'cancel';
+  ignoreConfirm.showModal();
+};
+ignoreConfirm.addEventListener('close', async () => {
+  if (ignoreConfirm.returnValue !== 'ignore') return;
   sending = true;
   controls();
   try {
@@ -316,7 +334,7 @@ el('ignore-selected').onclick = async () => {
     sending = false;
     controls();
   }
-};
+});
 async function loadIgnored() {
   const status = el('ignored-status');
   status.textContent = 'Loading ignored titles…';
