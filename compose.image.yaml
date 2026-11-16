@@ -1,6 +1,6 @@
 services:
   translaterr:
-    image: "${TRANSLERR_IMAGE:-ghcr.io/itskaims/translerr:v0.1.0}"
+    image: "${TRANSLERR_IMAGE:-ghcr.io/itskaims/translerr:v0.2.0}"
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:

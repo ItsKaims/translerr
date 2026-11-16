@@ -1,9 +1,7 @@
-First Translerr beta for self-hosted movie and TV subtitle translation.
-
-- Translate English SRT, embedded text, or English Blu-ray PGS via local OCR.
-- Use your own OpenAI or Anthropic API key and select the destination language.
-- Queue several videos and resume unfinished work after a restart.
-- New installs require a password change before opening the library.
+- Cinema Amber Library with movie and TV filters, bulk selection, and queue progress.
+- Regenerate subtitles from a selected English track while keeping a backup.
+- Review completed runs in paginated History and clear history from the app.
+- Ignore individual movies or entire series and restore them from Ignored titles.
 
 **Docker image (Linux x86-64)**
 
@@ -11,5 +9,6 @@ First Translerr beta for self-hosted movie and TV subtitle translation.
 @IMAGE@
 ```
 
-Download the Compose and environment examples below. See the README for setup,
-privacy details, and the beta test checklist.
+For a new installation, download the Compose file and environment template below.
+To upgrade an existing image installation, update its image tag to `v0.2.0`,
+then pull and recreate the service with the same library and state mounts.

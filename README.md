@@ -9,7 +9,7 @@ language beside the video for Jellyfin and other media servers.
 
 For the prebuilt Linux x86-64 image, grab `compose.image.yaml` and
 `translerr.env.example` from the
-[beta release](https://github.com/ItsKaims/translerr/releases/tag/v0.1.0).
+[beta release](https://github.com/ItsKaims/translerr/releases/tag/v0.2.0).
 Save the environment example as `.env` and follow the same path and permission
 steps below. Start it with `docker compose -f compose.image.yaml up -d`.
 The image is pinned to the beta version. You can override it using
@@ -33,7 +33,7 @@ For OMV, create a project under **Services → Compose → Files**, paste
 `compose.image.yaml` into **File** and your environment values into
 **Environment**, then click **Up**. For a source build, use `compose.yaml`
 and copy `Dockerfile`, `.dockerignore`, `app.py`, `index.html`, `admin.html`,
-and `login.html` beside the YAML. An absolute `STATE_PATH` outside the Compose
+`login.html`, and `history.html` beside the YAML. An absolute `STATE_PATH` outside the Compose
 project folder keeps OMV's project permissions separate from app data.
 
 ## First login
