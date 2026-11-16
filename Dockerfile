@@ -3,6 +3,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tesserac
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir pgsrip==0.3.0
 WORKDIR /app
-COPY app.py index.html admin.html login.html ./
+COPY app.py index.html admin.html login.html history.html ./
 ENV PYTHONUNBUFFERED=1
 CMD ["python", "app.py"]

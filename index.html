@@ -36,10 +36,11 @@ td:first-child{width:44px;text-align:center}
 tr:has(input:checked){background:#302316}
 td small{display:block;margin-top:3px}
 input[type=checkbox]{accent-color:var(--amber);width:17px;height:17px}
-#status,#issues{margin:0;overflow-wrap:anywhere}
-#issues:empty,#scan-note:empty{display:none}
+#status{margin:0;overflow-wrap:anywhere}
+#scan-note:empty{display:none}
 #scan-note,#empty{margin:12px 14px}
 #scan-note{color:#ff9470}
+a{color:var(--amber)}
 progress{width:100%;accent-color:var(--amber)}
 [hidden]{display:none!important}
 dialog{color:inherit;width:min(680px,calc(100% - 32px));padding:0}
@@ -70,7 +71,7 @@ dialog::backdrop{background:#0009}
 #progress::-moz-progress-bar{background:repeating-linear-gradient(45deg,#ffa52b 0 7px,#ffc16a 7px 14px);border-radius:8px}
 </style>
 <main>
-<header style="display:flex;align-items:center;justify-content:space-between"><strong class="brand"><span aria-hidden="true">文</span>Translerr</strong><nav><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
+<header style="display:flex;align-items:center;justify-content:space-between"><strong class="brand"><span aria-hidden="true">文</span>Translerr</strong><nav><a class="nav-button" href="/history">History</a><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
 <h1>Library</h1>
 <p>Translate English subtitles for movies and TV episodes.</p>
 <div class="workspace">
@@ -114,7 +115,7 @@ dialog::backdrop{background:#0009}
 <button type="button" id="resume">Resume queue</button>
 <button type="button" id="discard">Discard remaining items</button>
 </div>
-<ul id="issues"></ul>
+<a href="/history" id="history-issues" hidden></a>
 </section>
 </aside>
 </div>
@@ -246,11 +247,13 @@ async function poll() {
     } else if (job.run) {
       el('status').textContent = current ? current[4] : job.message;
     }
-    el('issues').replaceChildren(...(job.issues || []).map(message => {
-      const item = document.createElement('li');
-      item.textContent = message;
-      return item;
-    }));
+    const issues = (job.issues || []).length;
+    el('history-issues').hidden = !issues;
+    el('history-issues').textContent = job.active || job.paused
+      ? issues + ' issues in this run'
+      : 'View ' + issues + ' issues in History';
+    el('history-issues').removeAttribute('href');
+    if (!job.active && !job.paused) el('history-issues').href = '/history';
     controls();
   } catch { el('status').textContent = 'Lost contact with Translerr.'; }
 }

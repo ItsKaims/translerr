@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Translation History · Translerr</title>
+<style>
+:root{color-scheme:dark;--line:#41362c;--amber:#ffad3d;--muted:#bdb0a2}
+*{box-sizing:border-box}
+body{margin:0;background:#15110e;color:#f5ede4;font:16px system-ui}
+main{max-width:1140px;margin:auto;padding:24px}
+header,footer{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:36px;letter-spacing:-.04em}
+a{color:var(--amber)}
+button{padding:10px 14px;border:1px solid var(--line);border-radius:9px;background:#211b16;color:inherit;font:inherit;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+.panel{overflow:auto;background:#201a15;border:1px solid var(--line);border-radius:18px;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;text-align:left}
+td,th{padding:14px;border-bottom:1px solid var(--line);vertical-align:top}
+th,footer,#status{color:var(--muted)}
+details{margin-top:8px}
+summary{cursor:pointer;color:var(--amber)}
+ul{padding-left:20px}
+li{margin:4px 0;overflow-wrap:anywhere}
+#empty{padding:14px}
+</style>
+<main>
+<a href="/">← Library</a>
+<header><h1>Translation History</h1><button id="clear" disabled>Clear history</button></header>
+<div class="panel">
+<table>
+<thead><tr><th scope="col">Finished</th><th scope="col">Titles</th><th scope="col">Language</th><th scope="col">Result</th></tr></thead>
+<tbody id="runs"></tbody>
+</table>
+<p id="empty" hidden>No completed or discarded runs.</p>
+</div>
+<footer>
+<button id="previous" disabled>Previous</button>
+<span id="page"></span>
+<button id="next" disabled>Next</button>
+</footer>
+<p id="status" role="status">Loading history…</p>
+</main>
+<script>
+const el = id => document.getElementById(id);
+let page = 1;
+let pages = 1;
+let count = 0;
+let languages = {};
+function controls(busy) {
+  el('previous').disabled = busy || page <= 1;
+  el('next').disabled = busy || page >= pages;
+  el('clear').disabled = busy || !count;
+}
+function renderRun(run) {
+  const row = document.createElement('tr');
+  row.insertCell().textContent = run.finished === null ? 'Unknown' : new Date(run.finished * 1000).toLocaleString();
+  const titles = row.insertCell();
+  titles.textContent = run.videos.length === 1 ? run.videos[0].split('/').at(-1)
+    : run.videos.length + ' titles';
+  row.insertCell().textContent = languages[run.code] || run.code;
+  const result = row.insertCell();
+  result.textContent = (run.status === 'discarded' ? 'Discarded · ' : '') +
+    'Saved ' + run.saved + ' of ' + run.videos.length;
+  if (run.videos.length > 1 || run.issues.length) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = run.issues.length ? run.issues.length + ' issues · View details' : 'View titles';
+    const list = document.createElement('ul');
+    for (const text of run.issues.length ? run.issues : run.videos.map(path => path.split('/').at(-1))) {
+      const item = document.createElement('li');
+      item.textContent = text;
+      list.append(item);
+    }
+    details.append(summary, list);
+    result.append(details);
+  }
+  return row;
+}
+async function load(target) {
+  controls(true);
+  try {
+    const response = await fetch('/history/runs?page=' + target);
+    if (response.status === 401) { location.assign('/history'); return; }
+    if (!response.ok) throw Error('Could not load history.');
+    const data = await response.json();
+    ({page, pages, count} = data);
+    el('runs').replaceChildren(...data.runs.map(renderRun));
+    el('empty').hidden = Boolean(count);
+    el('page').textContent = 'Page ' + page + ' of ' + pages;
+    el('status').textContent = '';
+  } catch (error) {
+    el('status').textContent = error.message;
+  } finally { controls(false); }
+}
+el('previous').onclick = () => load(page - 1);
+el('next').onclick = () => load(page + 1);
+el('clear').onclick = async () => {
+  if (!confirm('Clear all translation history? Saved subtitles will stay in your library.')) return;
+  controls(true);
+  try {
+    const response = await fetch('/history/clear', {
+      method: 'POST', headers: {'X-Translaterr-Token': '__TOKEN__'}
+    });
+    if (!response.ok) throw Error('Could not clear history.');
+    await load(1);
+  } catch (error) {
+    el('status').textContent = error.message;
+    controls(false);
+  }
+};
+fetch('/languages').then(response => response.ok ? response.json() : {}).then(data => {
+  languages = data;
+}).finally(() => load(1));
+</script>

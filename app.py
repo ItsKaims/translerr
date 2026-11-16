@@ -63,6 +63,8 @@ def initialize_state():
 
 
         db.execute("CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY, state TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS history "
+                   "(id INTEGER PRIMARY KEY, run TEXT UNIQUE, finished INTEGER, state TEXT)")
         db.execute("CREATE TABLE IF NOT EXISTS account (id INTEGER PRIMARY KEY, salt TEXT, digest TEXT, setup INTEGER)")
         if not db.execute("SELECT 1 FROM account WHERE id = 1").fetchone():
             store_password(db, os.getenv("TRANSLERR_SETUP_PASSWORD") or "translerr", True)
@@ -430,9 +432,26 @@ def read_queue():
     return json.loads(row[0]) if row else None
 
 
-def checkpoint(queue):
+def checkpoint(queue, restored=False):
     with closing(sqlite3.connect(STATE / "settings.sqlite3")) as db, db:
+        if queue["status"] in {"complete", "discarded"} and not queue.get("archived"):
+            db.execute("INSERT OR IGNORE INTO history (run, finished, state) VALUES (?, ?, ?)",
+                       (queue["run"], None if restored else int(time.time()), json.dumps(queue)))
+            queue["archived"] = True
         db.execute("INSERT OR REPLACE INTO queue VALUES (1, ?)", (json.dumps(queue),))
+
+
+def history_page(page):
+    page_size = 20
+    with closing(sqlite3.connect(STATE / "settings.sqlite3")) as db:
+        db.execute("BEGIN")
+        count = db.execute("SELECT count(*) FROM history").fetchone()[0]
+        pages = max(1, (count + page_size - 1) // page_size)
+        page = max(1, min(page, pages))
+        rows = db.execute("SELECT finished, state FROM history ORDER BY id DESC LIMIT ? OFFSET ?",
+                          (page_size, (page - 1) * page_size)).fetchall()
+    return {"page": page, "pages": pages, "count": count,
+            "runs": [{"finished": finished, **json.loads(state)} for finished, state in rows]}
 
 
 def show_queue(queue):
@@ -518,6 +537,7 @@ def restore_queue():
             if queue["status"] == "running":
                 start_queue(queue)
             else:
+                checkpoint(queue, restored=True)
                 show_queue(queue)
 
 
@@ -558,16 +578,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         session = self.session()
         change = bool(session and self.setup_required())
-        if self.path in {"/", "/admin", "/login"} and (not session or change):
+        if self.path in {"/", "/admin", "/login", "/history"} and (not session or change):
             return self.auth_page(change)
         if not session or change:
             return self.reply(401, json.dumps({"message": "Sign in and complete password setup."}))
         if self.path == "/login":
             return self.reply(200, '<a href="/">Open Translerr</a>', "text/html")
-        if self.path in {"/", "/admin"}:
-            page = "admin.html" if self.path == "/admin" else "index.html"
+        if self.path in {"/", "/admin", "/history"}:
+            page = {"/": "index.html", "/admin": "admin.html", "/history": "history.html"}[self.path]
             self.reply(200, Path(__file__).with_name(page).read_text().replace(
                 "__TOKEN__", TOKEN), "text/html")
+        elif urlsplit(self.path).path == "/history/runs":
+            try:
+                page = int(parse_qs(urlsplit(self.path).query).get("page", ["1"])[0])
+            except ValueError:
+                return self.reply(400, json.dumps({"message": "Invalid page."}))
+            self.reply(200, json.dumps(history_page(page)))
         elif self.path == "/languages":
             self.reply(200, json.dumps({code: data[0] for code, data in LANGUAGES.items()}))
         elif self.path == "/settings":
@@ -654,6 +680,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.post_auth()
         if not self.session() or self.setup_required():
             return self.reply(401, json.dumps({"message": "Sign in and complete password setup."}))
+        if self.path == "/history/clear":
+            with LOCK, closing(sqlite3.connect(STATE / "settings.sqlite3")) as db, db:
+                db.execute("DELETE FROM history")
+                if not JOB["active"] and not JOB.get("paused"):
+                    db.execute("DELETE FROM queue")
+                    JOB.clear()
+                    JOB.update(active=False, message="Ready")
+            return self.reply(200, "{}")
         if self.path in {"/queue/resume", "/queue/discard"}:
             with LOCK:
                 queue = read_queue()
