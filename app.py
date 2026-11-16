@@ -63,6 +63,7 @@ def initialize_state():
 
 
         db.execute("CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY, state TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS ignored_titles (path TEXT PRIMARY KEY)")
         db.execute("CREATE TABLE IF NOT EXISTS history "
                    "(id INTEGER PRIMARY KEY, run TEXT UNIQUE, finished INTEGER, state TEXT)")
         db.execute("CREATE TABLE IF NOT EXISTS account (id INTEGER PRIMARY KEY, salt TEXT, digest TEXT, setup INTEGER)")
@@ -333,13 +334,43 @@ def missing_embedded_subtitle(video, aliases):
         return None
 
 
+def title_key(video):
+    parts = video.relative_to(ROOT).parts
+    if parts[0] in {"Movies", "TV"}:
+        return "/".join(parts[:2])
+    return parts[0]
+
+
+def ignored_titles():
+    with closing(sqlite3.connect(STATE / "settings.sqlite3")) as db:
+        return {row[0] for row in db.execute("SELECT path FROM ignored_titles")}
+
+
+def set_ignored(paths, remove):
+    if not isinstance(paths, list) or not paths or any(not isinstance(path, str) for path in paths):
+        raise ValueError("Choose at least one title.")
+    with closing(sqlite3.connect(STATE / "settings.sqlite3")) as db, db:
+        if remove:
+            db.executemany("DELETE FROM ignored_titles WHERE path = ?", [(path,) for path in paths])
+            return
+        keys = set()
+        for path in paths:
+            video = (ROOT / path).resolve()
+            if not video.is_relative_to(ROOT) or not video.is_file() or video.suffix.lower() not in VIDEO:
+                raise ValueError("Choose a video in your library.")
+            keys.add(title_key(video))
+        db.executemany("INSERT OR IGNORE INTO ignored_titles VALUES (?)", [(key,) for key in keys])
+
+
 def pending_episodes(code):
+    ignored = ignored_titles()
     candidates = []
     for directory, _, files in os.walk(ROOT):
         for name in files:
             path = Path(directory) / name
             if (path.suffix.lower() in VIDEO and path.is_file()
-                    and path.resolve().is_relative_to(ROOT) and not has_sidecar(path, code, files)):
+                    and path.resolve().is_relative_to(ROOT) and title_key(path.resolve()) not in ignored
+                    and not has_sidecar(path, code, files)):
                 candidates.append(path)
     aliases = language_aliases(code)
     with ThreadPoolExecutor(max_workers=4) as worker:
@@ -349,6 +380,7 @@ def pending_episodes(code):
 
 
 def regenerable_episodes(code):
+    ignored = ignored_titles()
     entries = []
     for directory, _, files in os.walk(ROOT):
         names = set(files)
@@ -356,6 +388,7 @@ def regenerable_episodes(code):
             video = Path(directory) / name
             if (video.suffix.lower() in VIDEO and video.is_file()
                     and video.resolve().is_relative_to(ROOT)
+                    and title_key(video.resolve()) not in ignored
                     and video.with_suffix(f".{code}.srt").name in names):
                 entries.append(str(video.relative_to(ROOT)))
     return sorted(entries)
@@ -490,6 +523,8 @@ def run_queue(queue):
                 result = "Video is no longer available in the mounted library."
             elif queue.get("in_progress") and subtitle_saved(video, queue):
                 result = "Saved before restart."
+            elif title_key(video) in ignored_titles():
+                result = "Skipped because this title is ignored."
             elif not all(provider_settings(queue["provider"])):
                 result = "Provider API key or model is missing. Update Admin settings and resume."
                 queue.update(status="paused", message=result)
@@ -594,6 +629,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 return self.reply(400, json.dumps({"message": "Invalid page."}))
             self.reply(200, json.dumps(history_page(page)))
+        elif self.path == "/ignored":
+            self.reply(200, json.dumps({"titles": sorted(ignored_titles())}))
         elif self.path == "/languages":
             self.reply(200, json.dumps({code: data[0] for code, data in LANGUAGES.items()}))
         elif self.path == "/settings":
@@ -700,13 +737,16 @@ class Handler(BaseHTTPRequestHandler):
                     checkpoint(queue)
                     show_queue(queue)
             return self.reply(200, "{}")
-        if self.path not in {"/translate", "/settings", "/models", "/regenerate"}:
+        if self.path not in {"/translate", "/settings", "/models", "/regenerate", "/ignored/add", "/ignored/remove"}:
             return self.reply(404, "{}")
         try:
             size = int(self.headers.get("Content-Length", 0))
             if not 0 < size <= (8192 if self.path in {"/settings", "/models"} else 8 * 1024 * 1024):
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(size))
+            if self.path in {"/ignored/add", "/ignored/remove"}:
+                set_ignored(data["paths"], remove=self.path == "/ignored/remove")
+                return self.reply(200, "{}")
             if self.path == "/models":
                 provider = data["provider"]
                 key = data.get("key", "").strip()
@@ -726,6 +766,9 @@ class Handler(BaseHTTPRequestHandler):
             if any(not video.is_relative_to(ROOT) or not video.is_file()
                    or video.suffix.lower() not in VIDEO for video in videos):
                 raise ValueError("Select an episode in the mounted folder.")
+            ignored = ignored_titles()
+            if any(title_key(video) in ignored for video in videos):
+                raise ValueError("Restore ignored titles before translating them.")
             if provider not in {"openai", "anthropic"} or not all(provider_settings(provider)):
                 raise ValueError("Configure a provider API key and model in Compose.")
             if code not in LANGUAGES:

@@ -69,6 +69,7 @@ dialog::backdrop{background:#0009}
 #progress::-webkit-progress-bar{background:#272019}
 #progress::-webkit-progress-value{background:repeating-linear-gradient(45deg,#ffa52b 0 7px,#ffc16a 7px 14px);border-radius:8px}
 #progress::-moz-progress-bar{background:repeating-linear-gradient(45deg,#ffa52b 0 7px,#ffc16a 7px 14px);border-radius:8px}
+#ignored-list{max-height:50vh;overflow:auto} .ignored-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 </style>
 <main>
 <header style="display:flex;align-items:center;justify-content:space-between"><strong class="brand"><span aria-hidden="true">文</span>Translerr</strong><nav><a class="nav-button" href="/history">History</a><a class="nav-button" href="/admin">Admin settings</a><button class="nav-button" type="button" id="logout">Sign out</button></nav></header>
@@ -89,6 +90,8 @@ dialog::backdrop{background:#0009}
 <span id="count" aria-live="polite">0 selected</span>
 <button id="all" type="button">Select all shown</button>
 <button id="clear" type="button">Unselect all</button>
+<button id="ignore-selected" type="button" disabled>Ignore selected</button>
+<button id="open-ignored" type="button">Ignored titles</button>
 </div>
 <div id="items">
 <table aria-label="Movies and episodes missing subtitles">
@@ -132,6 +135,14 @@ dialog::backdrop{background:#0009}
 <p id="regenerate-status" role="status"></p>
 </form>
 </dialog>
+<dialog id="ignored-dialog" aria-labelledby="ignored-heading">
+<form method="dialog">
+<h2 id="ignored-heading">Ignored titles</h2>
+<div id="ignored-list"></div>
+<p id="ignored-status" role="status"></p>
+<button>Close</button>
+</form>
+</dialog>
 <script>
 const el = id => document.getElementById(id);
 el('logout').onclick = async () => {
@@ -159,6 +170,7 @@ function controls() {
   el('open-regenerate').disabled = active || paused || sending || loading || !el('provider').value;
   el('submit').textContent = selected.size ? 'Translate ' + selected.size + ' selected' : 'Translate selected';
   el('clear').disabled = !selected.size;
+  el('ignore-selected').disabled = loading || sending || !selected.size;
   el('all').disabled = loading || !visible().some(name => !selected.has(name));
   el('count').textContent = selected.size + ' selected';
 }
@@ -282,6 +294,67 @@ for (const button of el('media-filter').querySelectorAll('button')) {
     render();
   };
 }
+async function updateIgnored(action, paths) {
+  const response = await fetch('/ignored/' + action, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-Translaterr-Token': '__TOKEN__'},
+    body: JSON.stringify({paths})
+  });
+  if (!response.ok) throw Error((await response.json()).message);
+}
+el('ignore-selected').onclick = async () => {
+  if (!confirm('Ignore the selected movies and entire series?')) return;
+  sending = true;
+  controls();
+  try {
+    await updateIgnored('add', [...selected]);
+    selected.clear();
+    await reload();
+  } catch (error) {
+    el('scan-note').textContent = error.message || 'Could not ignore titles.';
+  } finally {
+    sending = false;
+    controls();
+  }
+};
+async function loadIgnored() {
+  const status = el('ignored-status');
+  status.textContent = 'Loading ignored titles…';
+  try {
+    const response = await fetch('/ignored');
+    if (!response.ok) throw Error('Could not load ignored titles.');
+    const {titles} = await response.json();
+    const rows = titles.map(path => {
+      const row = document.createElement('div');
+      row.className = 'ignored-row';
+      const name = document.createElement('span');
+      name.textContent = path.split('/').at(-1);
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.textContent = 'Restore';
+      restore.setAttribute('aria-label', 'Restore ' + name.textContent);
+      restore.onclick = async () => {
+        restore.disabled = true;
+        try {
+          await updateIgnored('remove', [path]);
+          await loadIgnored();
+          await reload();
+        } catch (error) {
+          status.textContent = error.message || 'Could not restore title.';
+          restore.disabled = false;
+        }
+      };
+      row.append(name, restore);
+      return row;
+    });
+    el('ignored-list').replaceChildren(...rows);
+    status.textContent = rows.length ? '' : 'No ignored titles.';
+  } catch (error) { status.textContent = error.message; }
+}
+el('open-ignored').onclick = () => {
+  el('ignored-dialog').showModal();
+  loadIgnored();
+};
 el('filter').oninput = render;
 el('all').onclick = () => { for (const name of visible()) selected.add(name); render(); };
 el('clear').onclick = () => { selected.clear(); render(); };
